@@ -59,14 +59,14 @@
 #define SEND_INTERVAL 10
 
 // AdaFruit integration
-#define ADAFRUIT_ENABLED 1
+#define ADAFRUIT_ENABLED 0
 #define ADAFRUIT_API_KEY "YOURAPIKEY"
 #define ADAFRUIT_FEED_TEMPERATURE "temp"
 #define ADAFRUIT_FEED_HUMIDITY "humidity"
 #define ADAFRUIT_FEED_HEAT_INDEX "heat-index"
 
 // ThingSpeak integration
-#define THINGSPEAK_ENABLED 1
+#define THINGSPEAK_ENABLED 0
 #define THINGSPEAK_CHANNEL 123456
 #define THINGSPEAK_API_KEY "YOURAPIKEY"
 
@@ -77,7 +77,7 @@
 #define HTTP_POST_PATH "/"
 
 // Particle event
-#define PARTICLE_EVENT 1
+#define PARTICLE_EVENT 0
 #define PARTICLE_EVENT_NAME "dht-logger-log"
 
 //
