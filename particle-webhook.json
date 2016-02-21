@@ -1,0 +1,15 @@
+{
+    "eventName": "dht-logger-log",
+    "url": "https://YOURENDPOINT.execute-api.us-east-1.amazonaws.com/prod/iot",
+    "headers": {
+        "x-api-key": "YOURAPIKEY"
+    },
+    "requestType": "POST",
+    "json": {
+        "device": "{{device}}",
+        "temperature": "{{temperature}}",
+        "humidity": "{{humidity}}",
+        "heatIndex": "{{heatIndex}}"
+    },
+    "mydevices": true
+}
