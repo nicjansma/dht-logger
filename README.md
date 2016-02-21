@@ -240,9 +240,9 @@ The payload for the HTTP POST will be the same as the DynamoDB data:
 ```json
 {
   "device": "[device name]",
-  "temperature": [temp],
-  "humidity": [humidity],
-  "heatIndex": [heat index]
+  "temperature": 72.4,
+  "humidity": 50.0,
+  "heatIndex": 74.6
 }
 ```
 
