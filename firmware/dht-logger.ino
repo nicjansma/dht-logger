@@ -167,6 +167,18 @@ void setup() {
 #if ADAFRUIT_ENABLED
     aio.begin();
 #endif
+
+#if PARTICLE_EVENT
+    // startup event
+    sprintf(payload,
+            "{\"device\":\"%s\",\"state\":\"starting\"}",
+            DEVICE_NAME);
+
+    Spark.publish(PARTICLE_EVENT_NAME, payload, 60, PRIVATE);
+#endif
+
+    // run the first measurement
+    loop();
 }
 
 /**
