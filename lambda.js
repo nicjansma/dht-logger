@@ -15,7 +15,7 @@ var doc = require("dynamodb-doc");
 //
 // Constants
 //
-var TABLE_NAME = "YOURTABLENAME";
+var TABLE_NAME = "iot";
 
 var dynamodb = new doc.DynamoDB();
 
@@ -23,21 +23,33 @@ exports.handler = function(event, context) {
     console.log("Request received:\n", JSON.stringify(event));
     console.log("Context received:\n", JSON.stringify(context));
 
-    var datetime = new Date().getTime();
+    var dateTime = new Date().getTime();
 
     var item = {
         "device": event.device, 
-        "time": datetime,
-        "coreid": event.coreid,
-        "event": event.event
+        "time": dateTime
     };
+
+    if (typeof event.coreid !== "undefined") {
+        item.deviceId = event.coreid;
+    }
+
+    if (typeof event.event !== "undefined") {
+        item.event = event.event;
+    }
 
     // parse data payload
     var data;
-    try {
-        data = JSON.parse(event.data);
-    } catch (e) {
-        return context.fail("Failed to parse data JSON");
+
+    // if there is a 'data' property, it's possibly from a Particle Webhook, and we should use those values
+    if (typeof event.data !== "undefined" && typeof event.published_at !== "undefined") {
+        try {
+            data = JSON.parse(event.data);
+        } catch (e) {
+            return context.fail("Failed to parse data JSON");
+        }
+    } else {
+        data = event;
     }
 
     // copy data properties over to DynamoDB item
@@ -61,7 +73,7 @@ exports.handler = function(event, context) {
             context.fail("ERROR: Dynamo failed: " + err);
         } else {
             console.log("Dynamo Success: " + JSON.stringify(data, null, "  "));
-            context.succeed();
+            context.succeed({ success: true });
         }
     });
 }
