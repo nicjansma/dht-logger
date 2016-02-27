@@ -252,7 +252,7 @@ I also have this device monitored via my [Samsung SmartThings](https://www.smart
 
 ![AdaFruit.io](https://github.com/nicjansma/dht-logger/raw/master/images/smartthings.png)
 
-To configure this, you'll want to use the Device Handler in `smart-things-device-type.groovy`.  You can install it via the [SmartThings API Console](https://graph.api.smartthings.com).
+To configure this, you'll want to use the Device Handler in my [smart-things\(https://github.com/nicjansma/smart-things/tree/master/devicetypes/nicjansma/particle-temperature-humidity-logger) project.  You can install it via the [SmartThings API Console](https://graph.api.smartthings.com).
 
 ## Thanks
 
