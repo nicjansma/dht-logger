@@ -5,11 +5,6 @@
         "x-api-key": "YOURAPIKEY"
     },
     "requestType": "POST",
-    "json": {
-        "device": "{{device}}",
-        "temperature": "{{temperature}}",
-        "humidity": "{{humidity}}",
-        "heatIndex": "{{heatIndex}}"
-    },
+    "json": true,
     "mydevices": true
 }
