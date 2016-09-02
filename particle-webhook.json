@@ -5,6 +5,8 @@
         "x-api-key": "YOURAPIKEY"
     },
     "requestType": "POST",
-    "json": true,
+    "json": { 
+        "from": "particle"
+    },
     "mydevices": true
 }
