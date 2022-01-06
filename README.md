@@ -1,13 +1,14 @@
-# Particle (Spark) Core / Photon / Electron Remote Temperature and Humidity Logger
+# Particle (Spark) Core / Photon / Electron Remote Temperature and Humidity Logger (and optional Water Alarm)
 
 By [Nic Jansma](http://nicj.net)
 
-This is a remote temperature and humidity sensor that logs data to a number of optional services, including:
+This is a remote temperature, humidity and water alarm that logs data to a number of optional services, including:
 
 * [Adafruit.io](https://io.adafruit.com)
-* [ThingSpeak](thingspeak.com)
+* [ThingSpeak](https://thingspeak.com/)
 * [DynamoDB](https://aws.amazon.com/dynamodb/)
 * Any HTTP endpoint
+* MQTT
 
 I am currently using this on my kegerator (keezer) to monitor its temperature:
 
@@ -45,32 +46,31 @@ My Photon is then wrapped in a [case](https://www.thingiverse.com/thing:413025) 
 
 The `firmware/` directory contains all of the code you will need for a Particle device.
 
-The main code is in `dht-logger.ino`.  You will also need `DHT.cpp` and `DHT.h`, which are libraries that help decode the temperature and humidity data from the sensor.
+The main code is in `dht-logger.ino`.  You will also need to add the `PietteTech_DHT` library (in the IDE), which is a library that helps decode the temperature and humidity data from the sensor.
 
-If you want to log to [Adafruit.io](https://io.adafruit.com), you will also need the 4 Adafruit library files:
+If you want to log to [Adafruit.io](https://io.adafruit.com), you will also need the `Adafruit_IO_Particle` library.
 
-* `Adafruit_IO_Arduino.cpp`
-* `Adafruit_IO_Arduino.h`
-* `Adafruit_IO_Client.cpp`
-* `Adafruit_IO_Client.h`
+If you want to use MQTT, you will also need the `MQTT` library.
 
-You can paste the contents of all of these files into the [Particle Build](https://build.particle.io) interface:
+You can paste the contents `dht-logger.ino` into the [Particle Web IDE](https://build.particle.io) interface:
 
-![Particle Build](https://github.com/nicjansma/dht-logger/raw/master/images/particle-build.png)
+![Particle Web IDE](https://github.com/nicjansma/dht-logger/raw/master/images/particle-build.png)
 
 The firmware has several configuration options, all in `dht-logger.ino`:
 
-* `DEVICE_NAME`: A friendly name for this device, used when logging to DynamoDB and the HTTP end-points
-* `DHTTYPE`: Which sensor type, such as `DHT11`, `DHT22`, `DHT21`, or `AM2301`
-* `DHTPIN`: Which digital pin the DHT is connected to
-* `LEDPIN`: Which pin has a LED (which blinks each time a reading is being taken)
+* `DEVICE_NAME`: A name for this device, used when logging to DynamoDB and the HTTP end-points.  It's often desirable to have this be all lower-case letters, and spaces replaced with `-` or `_`, depending on the endpoints.
+* `FRIENDLY_NAME`: A friendly name for this device, for display.  Can include spaces.
+* `DHT_TYPE`: Which sensor type, such as `DHT11`, `DHT22`, `DHT21`, `AM2301`, `AM2302`
+* `DHT_PIN`: Which digital pin the DHT is connected to
+* `DHT_TIMEOUT`: How long the DHT sensor be polled for
+* `LED_PIN`: Which pin has a LED (which blinks each time a reading is being taken)
 * `USE_FARENHEIT`: Whether to use Farenheit versus Celsius
 * `MIN_TEMPERATURE`, `MAX_TEMPERATURE`, `MIN_HUMIDITY` and `MAX_HUMIDITY`: I've found that my DHT22 sensor sometimes gives wildly inaccurate readings (such as -300*F).  These min/max values help weed out incorrect readings.
-* `SEND_INTERVAL`: How often to send data to the logging services
+* `CHECK_INTERVAL`: How often to check data and send to the logging services
 * `ADA_FRUIT_ENABLED`: Whether or not to send data to [Adafruit.io](http://io.adafruit.com)
   * `ADAFRUIT_API_KEY`: Your Adafruit.io API key
   * `ADAFRUIT_FEED_*`: Which Adafruit.io feed to use for each data-point
-* `THINGSPEAK_ENABLED`: Whether or not to send data to [ThingSpeak](http://thingspeak.com)
+* `THINGSPEAK_ENABLED`: Whether or not to send data to [ThingSpeak](https://thingspeak.com/)
   * `THINGSPEAK_CHANNEL`: Which channel to log to
   * `THINGSPEAK_API_KEY`: ThingSpeak API key
 * `HTTP_POST`: Whether or not to send data to a HTTP endpoint
@@ -79,6 +79,13 @@ The firmware has several configuration options, all in `dht-logger.ino`:
   * `HTTP_POST_PATH`: Path to send to
 * `PARTICLE_EVENT`: Whether or not to send data via a [Particle event](https://docs.particle.io/reference/api/#events)
   * `PARTICLE_EVENT_NAME`: Which event name to use
+* `MQTT_ENABLED`: Whether MQTT is enabled or not
+    * `MQTT_SERVER`: MQTT server
+    * `MQTT_PORT`: MQTT port
+    * `MQTT_TOPIC`: MQTT root state topic
+    * `MQTT_KEEPALIVE_TIMEOUT`: MQTT keepalive timeout
+    * `MQTT_DEVICE_MODEL` MQTT Device model
+    * `MQTT_HOME_ASSISTANT_DISCOVERY: MQTT topic for discovery for Home Assistant
 
 Many of these options are explained more in the Logging section below.
 
@@ -229,7 +236,7 @@ Now, your Particle will emit an event that triggers a webhook that hits an API G
 
 ### HTTP POST
 
-The final service that the `dht-logger` can log to is any other HTTP POST URL.
+The device can be configured to log to any HTTP POST URL.
 
 Note that HTTPS is not supported (yet) by the Photon.
 
@@ -245,6 +252,14 @@ The payload for the HTTP POST will be the same as the DynamoDB data:
   "heatIndex": 74.6
 }
 ```
+
+### MQTT
+
+The device can be configured to send [MQTT discovery](https://www.home-assistant.io/docs/mqtt/discovery/) and [state](https://www.home-assistant.io/docs/mqtt/) payloads for [Home Assistant](https://www.home-assistant.io/).
+
+To configure, set the `MQTT_*` variables.
+
+![AdaFruit.io](https://github.com/nicjansma/dht-logger/raw/master/images/home-assistant.png)
 
 ## SmartThings
 
@@ -262,3 +277,12 @@ This project was built on top of a lot of work done by others, including:
 * https://gist.github.com/wgbartley/8301123
 * https://github.com/adafruit/DHT-sensor-library/blob/master/DHT.h
 * https://github.com/adafruit/Adafruit_IO_Arduino
+
+## Version History
+
+* 2016-02-20
+    * Initial version
+* 2022-01-05
+    * Switched to using official libraries (`PietteTech_DHT` for DHT and `Adafruit_IO_Particle` if needed)
+    * Added MQTT support
+    * Added optional Water Sensor
