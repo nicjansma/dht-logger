@@ -129,6 +129,16 @@
 #include <MQTT.h>
 #endif
 
+// Watchdog timeout - should be greater than CHECK_INTERVAL
+#define WATCHDOG_TIMEOUT 300000
+
+// Automatically reboots after this many seconds (1 day)
+#define AUTO_REBOOT_INTERVAL 86400
+
+// reset types
+#define RESET_DAILY 0
+#define RESET_WATCHDOG 1
+
 //
 // Locals
 //
@@ -159,6 +169,9 @@ int failed = 0;
 
 // last time since we sent sensor readings
 int lastUpdate = 0;
+
+// how long the system has been up
+int uptime = 0;
 
 #if ADAFRUIT_ENABLED
 Adafruit_IO_Client aio = Adafruit_IO_Client(tcpClient, ADAFRUIT_API_KEY);
@@ -198,11 +211,15 @@ char mqttPayload[1024];
 char mqttDevice[1024];
 #endif
 
+// ApplicationWatchdog
+ApplicationWatchdog *wd;
+
 //
 // Function Declarations
 //
 void checkDHT();
 void checkWaterAlarm();
+void watchdogHandler();
 
 //
 // Functions
@@ -216,11 +233,13 @@ void setup() {
     digitalWrite(LED_PIN, HIGH);
 
     // configure Particle variables - float isn't accepted, so we have to use string versions
-    Particle.variable("temperature", &temperatureString[0], STRING);
-    Particle.variable("humidity", &humidityString[0], STRING);
-    Particle.variable("heatIndex", &heatIndexString[0], STRING);
+    Particle.variable("temperature", temperatureString[0]);
+    Particle.variable("humidity", humidityString[0]);
+    Particle.variable("heatIndex", heatIndexString[0]);
 
-    Particle.variable("status", &failed, INT);
+    Particle.variable("status", failed);
+
+    Particle.variable("uptime", uptime);
 
     // start the DHT sensor
     dht.begin();
@@ -230,10 +249,10 @@ void setup() {
     pinMode(WATER_SENSOR, INPUT);
 
     // publish the water variable
-    Particle.variable("water", &water, INT);
+    Particle.variable("water", water);
 
     // publish the alarm state variable
-    Particle.variable("waterAlarm", &waterAlarm, INT);
+    Particle.variable("waterAlarm", waterAlarm);
 #endif
 
 #if THINGSPEAK_ENABLED
@@ -246,7 +265,8 @@ void setup() {
 
 #if PARTICLE_EVENT
     // startup event
-    sprintf(payload,
+    snprintf(payload,
+            1024,
             "{\"device\":\"%s\",\"state\":\"starting\"}",
             DEVICE_NAME);
 
@@ -255,7 +275,8 @@ void setup() {
 
 #if MQTT_ENABLED
     // MQTT state topic
-    sprintf(mqttStateTopic,
+    snprintf(mqttStateTopic,
+            1024,
             "%s/%s/state",
             MQTT_TOPIC,
             DEVICE_NAME);
@@ -263,7 +284,8 @@ void setup() {
     // connect to MQTT server
     mqttClient.connect(DEVICE_NAME);
     
-    sprintf(mqttDevice,
+    snprintf(mqttDevice,
+        1024,
         "\"device\":{\"identifiers\":[\"%s\"],\"manufacturer\":\"Particle\",\"model\":\"%s\",\"name\":\"%s\",\"sw_version\":\"1.0\"}",
         DEVICE_NAME,
         MQTT_DEVICE_MODEL,
@@ -272,14 +294,23 @@ void setup() {
 
     // share the IP address
     IPAddress myIp = WiFi.localIP();
-    sprintf(localIpString, "%d.%d.%d.%d", myIp[0], myIp[1], myIp[2], myIp[3]);
-    Particle.variable("ip", localIpString, STRING);
+    snprintf(localIpString, 24, "%d.%d.%d.%d", myIp[0], myIp[1], myIp[2], myIp[3]);
+    Particle.variable("ip", localIpString);
 
     // LED low once done
     digitalWrite(LED_PIN, LOW);
 
+    // start watchdog
+    wd = new ApplicationWatchdog(WATCHDOG_TIMEOUT, watchdogHandler, 1536);
+
     // run the first measurement
     loop();
+}
+
+void watchdogHandler() {
+  // Do as little as possible in this function, preferably just
+  // calling System.reset().
+  System.reset(RESET_WATCHDOG, RESET_NO_WAIT);
 }
 
 /**
@@ -287,6 +318,7 @@ void setup() {
  */
 void loop() {
     int now = Time.now();
+    uptime = System.uptime();
 
 #if MQTT_ENABLED
     // Always service MQTT, even between sensor readings
@@ -305,14 +337,16 @@ void loop() {
             // Temperature
             //
             // MQTT discovery topic
-            sprintf(mqttTopic,
+            snprintf(mqttTopic,
+                    1024,
                     "%s/sensor/%s/temperature/config",
                     MQTT_HOME_ASSISTANT_DISCOVERY,
                     DEVICE_NAME);
 
             // MQTT discovery payloads
-            sprintf(mqttPayload,
-                    "{\"unique_id\":\"%s_temperature\",\"device_class\":\"temperature\",\"name\":\"%s Temperature\",\"state_topic\":\"%s/%s/state\",\"json_attributes_topic\":\"%s/%s/state\",\"unit_of_measurement\":\"�%s\",\"value_template\":\"{{ value_json.temperature }}\",%s}",
+            snprintf(mqttPayload,
+                    1024,
+                    "{\"unique_id\":\"%s_temperature\",\"device_class\":\"temperature\",\"name\":\"%s Temperature\",\"state_topic\":\"%s/%s/state\",\"json_attributes_topic\":\"%s/%s/state\",\"unit_of_measurement\":\"°%s\",\"value_template\":\"{{ value_json.temperature }}\",%s}",
                     DEVICE_NAME,
                     FRIENDLY_NAME,
                     MQTT_TOPIC,
@@ -329,13 +363,15 @@ void loop() {
             //
 
             // MQTT discovery payloads
-            sprintf(mqttTopic,
+            snprintf(mqttTopic,
+                    1024,
                     "%s/sensor/%s/humidity/config",
                     MQTT_HOME_ASSISTANT_DISCOVERY,
                     DEVICE_NAME);
 
             // MQTT discovery payloads
-            sprintf(mqttPayload,
+            snprintf(mqttPayload,
+                    1024,
                     "{\"unique_id\":\"%s_humidity\",\"device_class\":\"humidity\",\"name\":\"%s Humidity\",\"state_topic\":\"%s/%s/state\",\"json_attributes_topic\":\"%s/%s/state\",\"unit_of_measurement\":\"%%\",\"value_template\":\"{{ value_json.humidity }}\",%s}",
                     DEVICE_NAME,
                     FRIENDLY_NAME,
@@ -353,13 +389,15 @@ void loop() {
             //
 
             // MQTT discovery payloads
-            sprintf(mqttTopic,
+            snprintf(mqttTopic,
+                    1024,
                     "%s/binary_sensor/%s/water/config",
                     MQTT_HOME_ASSISTANT_DISCOVERY,
                     DEVICE_NAME);
 
             // MQTT discovery payloads
-            sprintf(mqttPayload,
+            snprintf(mqttPayload,
+                    1024,
                     "{\"unique_id\":\"%s_water\",\"device_class\":\"moisture\",\"name\":\"%s Water\",\"state_topic\":\"%s/%s/state\",\"json_attributes_topic\":\"%s/%s/state\",\"value_template\":\"{{ value_json.water }}\",\"payload_on\":\"on\",\"payload_off\":\"off\",%s}",
                     DEVICE_NAME,
                     FRIENDLY_NAME,
@@ -375,7 +413,8 @@ void loop() {
             //
             // State
             //
-            sprintf(mqttPayload,
+            snprintf(mqttPayload,
+                    1024,
                     "{\"device\":\"%s\",\"status\":\"online\"}",
                     DEVICE_NAME);
 
@@ -394,6 +433,15 @@ void loop() {
         delay(100);
 
         return;
+    }
+
+    // check in for the Watchdog
+    ApplicationWatchdog::checkin();
+    
+    if (AUTO_REBOOT_INTERVAL != 0) {
+        if (uptime > AUTO_REBOOT_INTERVAL) {
+            System.reset(RESET_DAILY);
+        }
     }
 
     lastUpdate = now;
@@ -421,7 +469,8 @@ void checkDHT() {
         || humidity < MIN_HUMIDITY) {
 #if MQTT_ENABLED
         // MQTT update
-        sprintf(mqttPayload,
+        snprintf(mqttPayload,
+                1024,
                 "{\"device\":\"%s\",\"status\":\"failed\",\"code\":%d,\"temperature_bad\":\"%.2f\",\"humidity_bad\":\"%.2f\"}",
                 DEVICE_NAME,
                 failed,
@@ -437,9 +486,9 @@ void checkDHT() {
         heatIndex = dht.getHeatIndex();
 
         // convert floats to strings for Particle variables
-        sprintf(temperatureString, "%.2f", temperature);
-        sprintf(humidityString, "%.2f", humidity);
-        sprintf(heatIndexString, "%.2f", heatIndex);
+        snprintf(temperatureString, 10, "%.2f", temperature);
+        snprintf(humidityString, 10, "%.2f", humidity);
+        snprintf(heatIndexString, 10, "%.2f", heatIndex);
 
 #if THINGSPEAK_ENABLED
         // set all 3 fields first
@@ -458,7 +507,8 @@ void checkDHT() {
 #endif
 
 #if WATER_SENSOR_ENABLED
-        sprintf(payload,
+        snprintf(payload,
+            1024,
             "{\"device\":\"%s\",\"temperature\":%.2f,\"humidity\":%.2f,\"heatIndex\":%.2f,\"water\":\"%s\"}",
             DEVICE_NAME,
             temperature,
@@ -466,7 +516,8 @@ void checkDHT() {
             heatIndex,
             water ? "on" : "off");
 #else
-        sprintf(payload,
+        snprintf(payload,
+            1024,
             "{\"device\":\"%s\",\"temperature\":%.2f,\"humidity\":%.2f,\"heatIndex\":%.2f}",
             DEVICE_NAME,
             temperature,
