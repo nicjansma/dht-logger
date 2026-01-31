@@ -103,6 +103,7 @@
 #define MQTT_KEEPALIVE_TIMEOUT 300
 #define MQTT_DEVICE_MODEL "Photon"
 #define MQTT_HOME_ASSISTANT_DISCOVERY "homeassistant"
+#define MQTT_RECONNECT_INTERVAL 30
 
 //
 // Integration Includes
@@ -288,9 +289,16 @@ void loop() {
     int now = Time.now();
 
 #if MQTT_ENABLED
+    // Always service MQTT, even between sensor readings
     if (!mqttClient.isConnected()) {
-        // re-connect to MQTT server
-        mqttClient.connect(DEVICE_NAME);
+        // Only retry every 30 seconds
+        static int lastMqttRetry = 0;
+
+        if (now - lastMqttRetry > MQTT_RECONNECT_INTERVAL) {
+            mqttClient.connect(DEVICE_NAME);
+
+            lastMqttRetry = now;
+        }
     } else {
         if (!mqttSentDiscovery) {
             //
@@ -304,7 +312,7 @@ void loop() {
 
             // MQTT discovery payloads
             sprintf(mqttPayload,
-                    "{\"unique_id\":\"%s_temperature\",\"device_class\":\"temperature\",\"name\":\"%s Temperature\",\"state_topic\":\"%s/%s/state\",\"json_attributes_topic\":\"%s/%s/state\",\"unit_of_measurement\":\"°%s\",\"value_template\":\"{{ value_json.temperature }}\",%s}",
+                    "{\"unique_id\":\"%s_temperature\",\"device_class\":\"temperature\",\"name\":\"%s Temperature\",\"state_topic\":\"%s/%s/state\",\"json_attributes_topic\":\"%s/%s/state\",\"unit_of_measurement\":\"ï¿½%s\",\"value_template\":\"{{ value_json.temperature }}\",%s}",
                     DEVICE_NAME,
                     FRIENDLY_NAME,
                     MQTT_TOPIC,
@@ -380,8 +388,11 @@ void loop() {
     }
 #endif
 
-    // only run every CHECK_INTERVAL seconds
+    // only run sensors every CHECK_INTERVAL seconds
     if (now - lastUpdate < CHECK_INTERVAL) {
+        // Add delay to prevent tight loop
+        delay(100);
+
         return;
     }
 
@@ -402,8 +413,8 @@ void checkDHT() {
     humidity = dht.getHumidity();
 
     if (failed != 0
-        || temperature == NAN
-        || humidity == NAN
+        || isnan(temperature)
+        || isnan(humidity)
         || temperature > MAX_TEMPERATURE
         || temperature < MIN_TEMPERATURE
         || humidity > MAX_HUMIDITY
