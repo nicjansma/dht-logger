@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2022 Nic Jansma, https://nicj.net
+// Copyright (c) 2026 Nic Jansma, https://nicj.net
 // https://github.com/nicjansma/dht-logger-mqtt
 //
 
@@ -73,6 +73,9 @@
 // sensor check interval (seconds)
 #define CHECK_INTERVAL 60
 
+// How often to print heartbeat
+#define HEARTBEAT_PRINT_INTERVAL 10
+
 // AdaFruit integration
 #define ADAFRUIT_ENABLED 0
 #define ADAFRUIT_API_KEY "YOURAPIKEY"
@@ -84,6 +87,9 @@
 #define THINGSPEAK_ENABLED 0
 #define THINGSPEAK_CHANNEL 123456
 #define THINGSPEAK_API_KEY "YOURAPIKEY"
+
+// Max payload size (MQTT, HTTP POST, Particle.publish, etc.)
+#define MAX_PAYLOAD_SIZE 600
 
 // HTTP POST integration
 #define HTTP_POST 0
@@ -162,13 +168,16 @@ int water = 0;
 int waterAlarm = 1;
 
 // the last time we switched alarm states (ms since Unix epoch)
-int waterAlarmSwitchTime = 0;
+uint32_t waterAlarmSwitchTime = 0;
 #endif
 
 int failed = 0;
 
 // last time since we sent sensor readings
-int lastUpdate = 0;
+uint32_t lastUpdate = 0;
+
+// last time since we printed something to serial
+uint32_t lastSerialPrint = 0;
 
 // how long the system has been up
 int uptime = 0;
@@ -194,8 +203,8 @@ http_response_t response;
 http_request_t request;
 #endif
 
-// for HTTP POST and Particle.publish payloads
-char payload[1024];
+// for HTTP POST, Particle.publish, and MQTT payloads
+char payload[MAX_PAYLOAD_SIZE];
 
 // local IP address
 char localIpString[24];
@@ -203,12 +212,11 @@ char localIpString[24];
 // MQTT client
 #if MQTT_ENABLED
 void mqttCallback(char* topic, byte* payload, unsigned int length);
-MQTT mqttClient(MQTT_SERVER, MQTT_PORT, 1024, MQTT_KEEPALIVE_TIMEOUT, mqttCallback);
+MQTT mqttClient(MQTT_SERVER, MQTT_PORT, MAX_PAYLOAD_SIZE, MQTT_KEEPALIVE_TIMEOUT, mqttCallback);
 bool mqttSentDiscovery = false;
-char mqttTopic[1024];
-char mqttStateTopic[1024];
-char mqttPayload[1024];
-char mqttDevice[1024];
+char mqttTopic[128];
+char mqttStateTopic[128];
+char mqttDevice[256];
 #endif
 
 // ApplicationWatchdog
@@ -233,9 +241,9 @@ void setup() {
     digitalWrite(LED_PIN, HIGH);
 
     // configure Particle variables - float isn't accepted, so we have to use string versions
-    Particle.variable("temperature", temperatureString[0]);
-    Particle.variable("humidity", humidityString[0]);
-    Particle.variable("heatIndex", heatIndexString[0]);
+    Particle.variable("temperature", temperatureString);
+    Particle.variable("humidity", humidityString);
+    Particle.variable("heatIndex", heatIndexString);
 
     Particle.variable("status", failed);
 
@@ -266,7 +274,7 @@ void setup() {
 #if PARTICLE_EVENT
     // startup event
     snprintf(payload,
-            1024,
+            MAX_PAYLOAD_SIZE,
             "{\"device\":\"%s\",\"state\":\"starting\"}",
             DEVICE_NAME);
 
@@ -276,7 +284,7 @@ void setup() {
 #if MQTT_ENABLED
     // MQTT state topic
     snprintf(mqttStateTopic,
-            1024,
+            128,
             "%s/%s/state",
             MQTT_TOPIC,
             DEVICE_NAME);
@@ -285,7 +293,7 @@ void setup() {
     mqttClient.connect(DEVICE_NAME);
     
     snprintf(mqttDevice,
-        1024,
+        256,
         "\"device\":{\"identifiers\":[\"%s\"],\"manufacturer\":\"Particle\",\"model\":\"%s\",\"name\":\"%s\",\"sw_version\":\"1.0\"}",
         DEVICE_NAME,
         MQTT_DEVICE_MODEL,
@@ -302,9 +310,17 @@ void setup() {
 
     // start watchdog
     wd = new ApplicationWatchdog(WATCHDOG_TIMEOUT, watchdogHandler, 1536);
+    
+    // initialize serial connection for debugging
+    Serial.begin(115200);
 
-    // run the first measurement
-    loop();
+    // delay so that the serial monitor can be opened before we start printing
+    delay(1000);
+    Serial.println("Starting up...");
+
+    // initialize time variables
+    lastUpdate = Time.now();
+    lastSerialPrint = Time.now();
 }
 
 void watchdogHandler() {
@@ -317,35 +333,39 @@ void watchdogHandler() {
  * Event loop
  */
 void loop() {
-    int now = Time.now();
+    uint32_t now = Time.now();
     uptime = System.uptime();
 
 #if MQTT_ENABLED
     // Always service MQTT, even between sensor readings
     if (!mqttClient.isConnected()) {
         // Only retry every 30 seconds
-        static int lastMqttRetry = 0;
+        static uint32_t lastMqttRetry = 0;
 
         if (now - lastMqttRetry > MQTT_RECONNECT_INTERVAL) {
+            Serial.println("Retrying MQTT connection...");
+
             mqttClient.connect(DEVICE_NAME);
 
             lastMqttRetry = now;
         }
     } else {
         if (!mqttSentDiscovery) {
+            Serial.println("Sending MQTT discovery...");
+
             //
             // Temperature
             //
             // MQTT discovery topic
             snprintf(mqttTopic,
-                    1024,
+                    128,
                     "%s/sensor/%s/temperature/config",
                     MQTT_HOME_ASSISTANT_DISCOVERY,
                     DEVICE_NAME);
 
             // MQTT discovery payloads
-            snprintf(mqttPayload,
-                    1024,
+            snprintf(payload,
+                    MAX_PAYLOAD_SIZE,
                     "{\"unique_id\":\"%s_temperature\",\"device_class\":\"temperature\",\"name\":\"%s Temperature\",\"state_topic\":\"%s/%s/state\",\"json_attributes_topic\":\"%s/%s/state\",\"unit_of_measurement\":\"°%s\",\"value_template\":\"{{ value_json.temperature }}\",%s}",
                     DEVICE_NAME,
                     FRIENDLY_NAME,
@@ -356,7 +376,7 @@ void loop() {
                     USE_FARENHEIT ? "F" : "C",
                     mqttDevice);
                     
-            mqttSend(mqttTopic, mqttPayload);
+            mqttSend(mqttTopic, payload);
 
             //
             // Humidity
@@ -364,14 +384,14 @@ void loop() {
 
             // MQTT discovery payloads
             snprintf(mqttTopic,
-                    1024,
+                    128,
                     "%s/sensor/%s/humidity/config",
                     MQTT_HOME_ASSISTANT_DISCOVERY,
                     DEVICE_NAME);
 
             // MQTT discovery payloads
-            snprintf(mqttPayload,
-                    1024,
+            snprintf(payload,
+                    MAX_PAYLOAD_SIZE,
                     "{\"unique_id\":\"%s_humidity\",\"device_class\":\"humidity\",\"name\":\"%s Humidity\",\"state_topic\":\"%s/%s/state\",\"json_attributes_topic\":\"%s/%s/state\",\"unit_of_measurement\":\"%%\",\"value_template\":\"{{ value_json.humidity }}\",%s}",
                     DEVICE_NAME,
                     FRIENDLY_NAME,
@@ -381,7 +401,7 @@ void loop() {
                     DEVICE_NAME,
                     mqttDevice);
                     
-            mqttSend(mqttTopic, mqttPayload);
+            mqttSend(mqttTopic, payload);
 
 #if WATER_SENSOR_ENABLED
             //
@@ -390,14 +410,14 @@ void loop() {
 
             // MQTT discovery payloads
             snprintf(mqttTopic,
-                    1024,
+                    128,
                     "%s/binary_sensor/%s/water/config",
                     MQTT_HOME_ASSISTANT_DISCOVERY,
                     DEVICE_NAME);
 
             // MQTT discovery payloads
-            snprintf(mqttPayload,
-                    1024,
+            snprintf(payload,
+                    MAX_PAYLOAD_SIZE,
                     "{\"unique_id\":\"%s_water\",\"device_class\":\"moisture\",\"name\":\"%s Water\",\"state_topic\":\"%s/%s/state\",\"json_attributes_topic\":\"%s/%s/state\",\"value_template\":\"{{ value_json.water }}\",\"payload_on\":\"on\",\"payload_off\":\"off\",%s}",
                     DEVICE_NAME,
                     FRIENDLY_NAME,
@@ -407,18 +427,18 @@ void loop() {
                     DEVICE_NAME,
                     mqttDevice);
                     
-            mqttSend(mqttTopic, mqttPayload);
+            mqttSend(mqttTopic, payload);
 #endif
 
             //
             // State
             //
-            snprintf(mqttPayload,
-                    1024,
+            snprintf(payload,
+                    MAX_PAYLOAD_SIZE,
                     "{\"device\":\"%s\",\"status\":\"online\"}",
                     DEVICE_NAME);
 
-            mqttSend(mqttStateTopic, mqttPayload);
+            mqttSend(mqttStateTopic, payload);
 
             mqttSentDiscovery = true;
         }
@@ -428,6 +448,14 @@ void loop() {
 #endif
 
     // only run sensors every CHECK_INTERVAL seconds
+    if (now - lastSerialPrint > HEARTBEAT_PRINT_INTERVAL) {
+        Serial.print("loop() heartbeat @ ");
+        Serial.println(now);
+
+        lastSerialPrint = now;
+    }
+
+    // only run sensors every CHECK_INTERVAL seconds
     if (now - lastUpdate < CHECK_INTERVAL) {
         // Add delay to prevent tight loop
         delay(100);
@@ -435,11 +463,15 @@ void loop() {
         return;
     }
 
+    Serial.println("Checking sensors...");
+
     // check in for the Watchdog
     ApplicationWatchdog::checkin();
-    
+
     if (AUTO_REBOOT_INTERVAL != 0) {
         if (uptime > AUTO_REBOOT_INTERVAL) {
+            Serial.println("Auto rebooting due to uptime...");
+
             System.reset(RESET_DAILY);
         }
     }
@@ -467,19 +499,24 @@ void checkDHT() {
         || temperature < MIN_TEMPERATURE
         || humidity > MAX_HUMIDITY
         || humidity < MIN_HUMIDITY) {
+
+        Serial.println("DHT sensor reading failed");
+
 #if MQTT_ENABLED
         // MQTT update
-        snprintf(mqttPayload,
-                1024,
+        snprintf(payload,
+                MAX_PAYLOAD_SIZE,
                 "{\"device\":\"%s\",\"status\":\"failed\",\"code\":%d,\"temperature_bad\":\"%.2f\",\"humidity_bad\":\"%.2f\"}",
                 DEVICE_NAME,
                 failed,
                 temperature,
                 humidity);
 
-        mqttSend(mqttStateTopic, mqttPayload);
+        mqttSend(mqttStateTopic, payload);
 #endif
     } else {
+        Serial.println("DHT sensor reading succeeded");
+
         failed = 0;
 
         // calculate the heat index
@@ -508,7 +545,7 @@ void checkDHT() {
 
 #if WATER_SENSOR_ENABLED
         snprintf(payload,
-            1024,
+            MAX_PAYLOAD_SIZE,
             "{\"device\":\"%s\",\"temperature\":%.2f,\"humidity\":%.2f,\"heatIndex\":%.2f,\"water\":\"%s\"}",
             DEVICE_NAME,
             temperature,
@@ -517,7 +554,7 @@ void checkDHT() {
             water ? "on" : "off");
 #else
         snprintf(payload,
-            1024,
+            MAX_PAYLOAD_SIZE,
             "{\"device\":\"%s\",\"temperature\":%.2f,\"humidity\":%.2f,\"heatIndex\":%.2f}",
             DEVICE_NAME,
             temperature,
@@ -557,12 +594,14 @@ void checkWaterAlarm() {
     if (water) {
         digitalWrite(LED_PIN, HIGH);
 
+        Serial.println("Water detected!");
+
         //
         // Alarm ON
         //
         if (waterAlarm == 0) {
             // only alarm if we're past the debounce interval
-            int now = Time.now();
+            uint32_t now = Time.now();
             if (now - waterAlarmSwitchTime > WATER_SENSOR_DEBOUNCE_SECONDS) {
                 waterAlarm = 1;
                 waterAlarmSwitchTime = now;
@@ -575,12 +614,14 @@ void checkWaterAlarm() {
     } else {
         digitalWrite(LED_PIN, LOW);
 
+        Serial.println("No water detected!");
+
         //
         // Alarm off
         //
         if (waterAlarm == 1) {
             // only alarm if we're past the debounce interval
-            int now = Time.now();
+            uint32_t now = Time.now();
             if (now - waterAlarmSwitchTime > WATER_SENSOR_DEBOUNCE_SECONDS) {
                 waterAlarm = 0;
                 waterAlarmSwitchTime = now;

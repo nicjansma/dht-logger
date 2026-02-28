@@ -281,8 +281,11 @@ This project was built on top of a lot of work done by others, including:
 ## Version History
 
 * 2016-02-20
-    * Initial version
+  * Initial version
 * 2022-01-05
-    * Switched to using official libraries (`PietteTech_DHT` for DHT and `Adafruit_IO_Particle` if needed)
-    * Added MQTT support
-    * Added optional Water Sensor
+  * Switched to using official libraries (`PietteTech_DHT` for DHT and `Adafruit_IO_Particle` if needed)
+  * Added MQTT support
+  * Added optional Water Sensor
+* 2026-02-28
+  * Stability fixes
+  * Serial console logging
